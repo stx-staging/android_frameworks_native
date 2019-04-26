@@ -391,6 +391,13 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.luma_sampling", value, "1");
     mLumaSampling = atoi(value);
 
+    char property[PROPERTY_VALUE_MAX] = {0};
+    if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
+        (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
+        (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
+        mVsyncSourceReliableOnDoze = true;
+    }
+
     const auto [early, gl, late] = mPhaseOffsets->getCurrentOffsets();
     mVsyncModulator.setPhaseOffsets(early, gl, late,
                                     mPhaseOffsets->getOffsetThresholdForNextVsync());
@@ -1503,25 +1510,36 @@ void SurfaceFlinger::onRefreshReceived(int sequenceId, hwc2_display_t /*hwcDispl
     repaintEverythingForHWC();
 }
 
-void SurfaceFlinger::setPrimaryVsyncEnabled(bool enabled) {
+void SurfaceFlinger::setVsyncEnabled(bool enabled) {
     ATRACE_CALL();
 
     // Enable / Disable HWVsync from the main thread to avoid race conditions with
     // display power state.
     postMessageAsync(new LambdaMessage(
-            [=]() NO_THREAD_SAFETY_ANALYSIS { setPrimaryVsyncEnabledInternal(enabled); }));
+            [=]() NO_THREAD_SAFETY_ANALYSIS { setVsyncEnabledInternal(enabled); }));
 }
 
-void SurfaceFlinger::setPrimaryVsyncEnabledInternal(bool enabled) {
+void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
     ATRACE_CALL();
+    Mutex::Autolock lockVsync(mVsyncLock);
 
     mHWCVsyncPendingState = enabled ? HWC2::Vsync::Enable : HWC2::Vsync::Disable;
 
-    if (const auto displayId = getInternalDisplayIdLocked()) {
-        sp<DisplayDevice> display = getDefaultDisplayDeviceLocked();
-        if (display && display->isPoweredOn()) {
-            setVsyncEnabledInHWC(*displayId, mHWCVsyncPendingState);
+    auto displayId = getInternalDisplayIdLocked();
+    if (mNextVsyncSource) {
+        // Disable current vsync source before enabling the next source
+        if (mActiveVsyncSource) {
+            displayId = mActiveVsyncSource->getId();
+            setVsyncEnabledInHWC(*displayId, HWC2::Vsync::Disable);
         }
+        displayId = mNextVsyncSource->getId();
+    } else if (mActiveVsyncSource) {
+        displayId = mActiveVsyncSource->getId();
+    }
+    setVsyncEnabledInHWC(*displayId, mHWCVsyncPendingState);
+    if (mNextVsyncSource) {
+        mActiveVsyncSource = mNextVsyncSource;
+        mNextVsyncSource = NULL;
     }
 }
 
@@ -2286,6 +2304,47 @@ void SurfaceFlinger::rebuildLayerStacks() {
     }
 }
 
+sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
+    // Return the vsync source from the active displays based on
+    // the order in which they are connected. Normally the order
+    // of priority is Primary (Built-in/Pluggable) followed by
+    // Secondary built-ins followed by pluggable.
+    for (const auto& display : mDisplaysList) {
+        int mode = display->getPowerMode();
+        if (display->isVirtual() || (mode == HWC_POWER_MODE_OFF) ||
+            (mode == HWC_POWER_MODE_DOZE_SUSPEND)) {
+            continue;
+        }
+
+        if (mVsyncSourceReliableOnDoze) {
+            if ((mode == HWC_POWER_MODE_NORMAL) ||
+                (mode == HWC_POWER_MODE_DOZE)) {
+              return display;
+            }
+        } else if (mode == HWC_POWER_MODE_NORMAL) {
+            return display;
+        }
+    }
+
+    // In-case active displays are not present, source the vsync from
+    // the display which is in doze mode even if it is unreliable
+    // in the same order of display priority as above.
+    if (!mVsyncSourceReliableOnDoze) {
+        for (const auto& display : mDisplaysList) {
+            int mode = display->getPowerMode();
+            if (display->isVirtual()) {
+                continue;
+            }
+
+            if (mode == HWC_POWER_MODE_DOZE) {
+                return display;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 // Returns a data space that fits all visible layers.  The returned data space
 // can only be one of
 //  - Dataspace::SRGB (use legacy dataspace and let HWC saturate when colors are enhanced)
@@ -2584,6 +2643,8 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
                 mInterceptor->saveDisplayDeletion(state.sequenceId);
                 mCurrentState.displays.removeItemsAt(index);
             }
+            mDisplaysList.remove(getDisplayDeviceLocked(mPhysicalDisplayTokens[info->id]));
+            mNextVsyncSource = getVsyncSource();
             mPhysicalDisplayTokens.erase(info->id);
         }
 
@@ -2821,6 +2882,7 @@ void SurfaceFlinger::processDisplayChangesLocked() {
                                       setupNewDisplayDeviceInternal(displayToken, displayId, state,
                                                                     dispSurface, producer));
                     if (!state.isVirtual()) {
+                        mDisplaysList.push_back(getDisplayDeviceLocked(displayToken));
                         LOG_ALWAYS_FATAL_IF(!displayId);
                         dispatchDisplayHotplugEvent(displayId->value, true);
                     }
@@ -4532,7 +4594,11 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, int 
         return;
     }
 
+    mActiveVsyncSource = getVsyncSource();
+
     display->setPowerMode(mode);
+
+    mNextVsyncSource = getVsyncSource();
 
     if (mInterceptor->isEnabled()) {
         mInterceptor->savePowerModeUpdate(display->getSequenceId(), mode);
