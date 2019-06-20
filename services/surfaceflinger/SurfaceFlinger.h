@@ -759,6 +759,7 @@ private:
 
     sp<DisplayDevice> getVsyncSource();
     void updateVsyncSource();
+    void forceResyncModel();
     void preComposition();
     void postComposition();
     void getCompositorTiming(CompositorTiming* compositorTiming);
@@ -1040,6 +1041,9 @@ private:
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
+
+    std::mutex mVsyncPeriodMutex;
+    std::vector<nsecs_t> mVsyncPeriod;
 
     TransactionCompletedThread mTransactionCompletedThread;
 
