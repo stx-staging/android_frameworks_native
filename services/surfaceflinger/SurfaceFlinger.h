@@ -944,6 +944,7 @@ private:
 
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
+    mutable Mutex mVsyncLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     Condition mTransactionCV;
