@@ -297,7 +297,7 @@ public:
     void setVsyncEnabled(bool enabled);
 
     // main thread function to enable/disable h/w composer event
-    void setPrimaryVsyncEnabledInternal(bool enabled);
+    void setVsyncEnabledInternal(bool enabled);
 
     // called on the main thread by MessageQueue when an internal message
     // is received

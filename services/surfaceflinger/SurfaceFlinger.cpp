@@ -3166,7 +3166,7 @@ void SurfaceFlinger::initScheduler(DisplayId primaryDisplayId) {
 
     // start the EventThread
     mScheduler =
-            getFactory().createScheduler([this](bool enabled) { setPrimaryVsyncEnabled(enabled); },
+            getFactory().createScheduler([this](bool enabled) { setVsyncEnabled(enabled); },
                                          *mRefreshRateConfigs);
     mAppConnectionHandle =
             mScheduler->createConnection("app", mVsyncModulator.getOffsets().app,
