@@ -71,13 +71,44 @@ cc_defaults {
         "android.hardware.graphics.composer@2.1-command-buffer",
         "android.hardware.graphics.composer@2.2-command-buffer",
         "android.hardware.graphics.composer@2.3-command-buffer",
-        "display_intf_headers"
     ],
     product_variables: {
         statix: {
             qcom_um_soong_namespace: {
                 cflags: ["-DQCOM_UM_FAMILY"],
                 header_libs: ["//%s:display_intf_headers"],
+            },
+            uses_qcom_um_3_18_family: {
+                header_libs: [
+                    "//hardware/qcom-caf/msm8996/display:display_intf_headers",
+                ],
+                shared_libs: [
+                    "//hardware/qcom-caf/msm8996/display:libqdMetaData.system",
+                ],
+            },
+            uses_qcom_um_4_4_family: {
+                header_libs: [
+                    "//hardware/qcom-caf/msm8998/display:display_intf_headers",
+                ],
+                shared_libs: [
+                    "//hardware/qcom-caf/msm8998/display:libqdMetaData.system",
+                ],
+            },
+            uses_qcom_um_4_9_family: {
+                header_libs: [
+                    "//hardware/qcom-caf/sdm845/display:display_intf_headers",
+                ],
+                shared_libs: [
+                    "//hardware/qcom-caf/sdm845/display:libqdMetaData.system",
+                ],
+            },
+            uses_qcom_um_4_14_family: {
+                header_libs: [
+                    "//hardware/qcom-caf/sm8150/display:display_intf_headers",
+                ],
+                shared_libs: [
+                    "//hardware/qcom-caf/sm8150/display:libqdMetaData.system",
+                ],
             },
         },
     },
