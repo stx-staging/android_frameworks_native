@@ -54,8 +54,7 @@ DisplayDeviceCreationArgs::DisplayDeviceCreationArgs(const sp<SurfaceFlinger>& f
       : flinger(flinger), displayToken(displayToken), displayId(displayId) {}
 
 DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs&& args)
-      : translateX(0), translateY(0),
-        mFlinger(args.flinger),
+      : mFlinger(args.flinger),
         mDisplayToken(args.displayToken),
         mSequenceId(args.sequenceId),
         mDisplayInstallOrientation(args.displayInstallOrientation),
@@ -238,7 +237,7 @@ void DisplayDevice::setProjection(int orientation,
     const int w = displayBounds.width();
     const int h = displayBounds.height();
 
-    R.reset();
+    ui::Transform R;
     DisplayDevice::orientationToTransfrom(orientation, w, h, &R);
 
     if (!frame.isValid()) {
@@ -260,9 +259,7 @@ void DisplayDevice::setProjection(int orientation,
         }
     }
 
-    TL.reset();
-    TP.reset();
-    S.reset();
+    ui::Transform TL, TP, S;
     float src_width  = viewport.width();
     float src_height = viewport.height();
     float dst_width  = frame.width();
@@ -280,9 +277,6 @@ void DisplayDevice::setProjection(int orientation,
     TL.set(-src_x, -src_y);
     TP.set(dst_x, dst_y);
 
-    ui::Transform translate;
-    translate.set(translateX, translateY);
-
     // need to take care of primary display rotation for globalTransform
     // for case if the panel is not installed aligned with device orientation
     if (isPrimary()) {
@@ -294,7 +288,7 @@ void DisplayDevice::setProjection(int orientation,
     // The viewport and frame are both in the logical orientation.
     // Apply the logical translation, scale to physical size, apply the
     // physical translation and finally rotate to the physical orientation.
-    ui::Transform globalTransform = translate * R * TP * S * TL;
+    ui::Transform globalTransform = R * TP * S * TL;
 
     const uint8_t type = globalTransform.getType();
     const bool needsFiltering =
@@ -328,11 +322,6 @@ std::string DisplayDevice::getDebugName() const {
     return base::StringPrintf("DisplayDevice{%s%s%s\"%s\"}", id.c_str(),
                               isPrimary() ? "primary, " : "", isVirtual() ? "virtual, " : "",
                               mDisplayName.c_str());
-}
-
-void DisplayDevice::setTranslate(int x, int y) {
-    translateX = x;
-    translateY = y;
 }
 
 void DisplayDevice::dump(std::string& result) const {
