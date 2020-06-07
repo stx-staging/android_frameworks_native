@@ -135,9 +135,9 @@
 #include "frame_extn_intf.h"
 #include "smomo_interface.h"
 #include "layer_extn_intf.h"
-#endif
 
 composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
+#endif
 
 namespace android {
 
@@ -293,6 +293,7 @@ std::string decodeDisplayColorSetting(DisplayColorSetting displayColorSetting) {
 
 SurfaceFlingerBE::SurfaceFlingerBE() : mHwcServiceName(getHwcServiceName()) {}
 
+#ifdef QCOM_UM_FAMILY
 bool LayerExtWrapper::Init() {
     mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
     if (!mLayerExtLibHandle) {
@@ -344,6 +345,7 @@ LayerExtWrapper::~LayerExtWrapper() {
       dlclose(mLayerExtLibHandle);
     }
 }
+#endif
 
 SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
       : mFactory(factory),
@@ -1876,6 +1878,7 @@ void SurfaceFlinger::onRefreshReceived(int sequenceId, hwc2_display_t /*hwcDispl
     }
 }
 
+#ifdef QCOM_UM_FAMILY
 void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
     if (!mFrameSchedulerExtnIntf) {
         return;
@@ -1908,6 +1911,7 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
         }
     }
 }
+#endif
 
 void SurfaceFlinger::setVsyncEnabled(bool enabled) {
     ATRACE_CALL();
@@ -2078,7 +2082,9 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
             // value throughout this frame to make sure all layers are
             // seeing this same value.
             populateExpectedPresentTime();
+#ifdef QCOM_UM_FAMILY
             updateFrameScheduler();
+#endif
 
             // When Backpressure propagation is enabled we want to give a small grace period
             // for the present fence to fire instead of just giving up on this frame to handle cases
@@ -2125,6 +2131,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                 }
             }
 
+#ifdef QCOM_UM_FAMILY
             if (mDolphinFuncsEnabled) {
                 int maxQueuedFrames = 0;
                 mDrawingState.traverseInZOrder([&](Layer* layer) {
@@ -2156,6 +2163,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                     mNumIdle++;
                 }
             }
+#endif
 
             // Now that we're going to make it to the handleMessageTransaction()
             // call below it's safe to call updateVrFlinger(), which will
@@ -2175,13 +2183,16 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                 // repaint
                 signalRefresh();
             }
+#ifdef QCOM_UM_FAMILY
             if (mFrameExtn && mDolphinFuncsEnabled) {
                 if (!refreshNeeded) {
                     mDolphinScaling(mNumIdle, mMaxQueuedFrames);
                 }
             }
+#endif
             break;
         }
+#ifdef QCOM_UM_FAMILY
         case MessageQueue::REFRESH: {
             if (mFrameExtn) {
                 mRefreshTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
@@ -2195,6 +2206,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
             }
             break;
         }
+#endif
     }
 }
 

@@ -186,6 +186,7 @@ public:
     int32_t mComposerSequenceId = 0;
 };
 
+#ifdef QCOM_UM_FAMILY
 class LayerExtWrapper {
 public:
     LayerExtWrapper() {}
@@ -208,6 +209,7 @@ private:
     CreateLayerExtnFuncPtr mLayerExtCreateFunc;
     DestroyLayerExtnFuncPtr mLayerExtDestroyFunc;
 };
+#endif
 
 class SurfaceFlinger : public BnSurfaceComposer,
                        public PriorityDumper,
@@ -1305,6 +1307,7 @@ public:
     int mNumIdle = -1;
 
 private:
+#ifdef QCOM_UM_FAMILY
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
 
@@ -1315,7 +1318,6 @@ private:
     void (*mDolphinScaling)(int numIdle, int maxQueuedFrames) = nullptr;
     void (*mDolphinRefresh)() = nullptr;
 
-    bool mUseSmoMo = false;
     SmomoIntf* mSmoMo = nullptr;
     void *mSmoMoLibHandle = nullptr;
 
@@ -1325,12 +1327,13 @@ private:
     DestroySmoMoFuncPtr mSmoMoDestroyFunc;
 
     FrameExtnIntf* mFrameExtn = nullptr;
-    void *mFrameExtnLibHandle = nullptr;
     bool (*mCreateFrameExtnFunc)(FrameExtnIntf **interface) = nullptr;
     bool (*mDestroyFrameExtnFunc)(FrameExtnIntf *interface) = nullptr;
-
-    bool mUseLayerExt = false;
     std::unique_ptr<LayerExtWrapper> mLayerExt;
+#endif
+    bool mUseLayerExt = false;
+    bool mUseSmoMo = false;
+    void *mFrameExtnLibHandle = nullptr;
 };
 
 } // namespace android
