@@ -1184,17 +1184,8 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& displayToken) {
 void SurfaceFlinger::setDesiredActiveConfig(const ActiveConfigInfo& info) {
     ATRACE_CALL();
     auto& refreshRate = mRefreshRateConfigs->getRefreshRateFromConfigId(info.configId);
+    mVsyncPeriod = refreshRate.getVsyncPeriod();
     ALOGV("setDesiredActiveConfig(%s)", refreshRate.getName().c_str());
-
-    if (mPerfHintEnabled) {
-        if (mPerfLockHandle > 0) {
-            mPerfLockReleaseFunc(mPerfLockHandle);
-        }
-
-        // Send Refresh Rate hint to Perf lib
-        int refreshRateValue = static_cast<int>(refreshRate.getFps());
-        mPerfLockHandle = mPerfHintFunc(PERF_HINT_FPS_UPDATE, nullptr, INT_MAX, refreshRateValue);
-    }
 
     std::lock_guard<std::mutex> lock(mActiveConfigLock);
     if (mDesiredActiveConfigChanged) {
@@ -1225,11 +1216,14 @@ void SurfaceFlinger::setDesiredActiveConfig(const ActiveConfigInfo& info) {
 
         mPhaseConfiguration->setRefreshRateFps(refreshRate.getFps());
         mVSyncModulator->setPhaseOffsets(mPhaseConfiguration->getCurrentOffsets());
+        mScheduler->setConfigChangePending(true);
     }
 
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->changeRefreshRate(refreshRate);
     }
+
+    SetContentFps(static_cast<int>(refreshRate.getFps()));
 }
 
 status_t SurfaceFlinger::setActiveConfig(const sp<IBinder>& displayToken, int mode) {
@@ -1305,6 +1299,7 @@ void SurfaceFlinger::desiredActiveConfigChangeDone() {
     mScheduler->resyncToHardwareVsync(true, refreshRate.getVsyncPeriod());
     mPhaseConfiguration->setRefreshRateFps(refreshRate.getFps());
     mVSyncModulator->setPhaseOffsets(mPhaseConfiguration->getCurrentOffsets());
+    mScheduler->setConfigChangePending(false);
 }
 
 void SurfaceFlinger::performSetActiveConfig() {
@@ -1611,12 +1606,9 @@ status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) 
         return OK;
     }
 
-    {
-        Mutex::Autolock lock(mStateLock);
-        if (mDisplays.size() != 1) {
-            // Revisit this for multi displays.
-            return OK;
-        }
+    if (mDisplaysList.size() != 1) {
+        // Revisit this for multi displays.
+        return OK;
     }
 
     uint64_t timeStamp = static_cast<uint64_t>(mVsyncTimeStamp + (sfOffset * -1));
@@ -2269,13 +2261,9 @@ void SurfaceFlinger::onMessageInvalidate(nsecs_t expectedVSyncTime) {
             const nsecs_t jankDuration = currentTime - mMissedFrameJankStart;
             if (jankDuration > kMinJankyDuration && jankDuration < kMaxJankyDuration) {
                 ATRACE_NAME("Jank detected");
-                ALOGD("Detected janky event. Missed frames: %d", mMissedFrameJankCount);
                 const int32_t jankyDurationMillis = jankDuration / (1000 * 1000);
-                {
-                    ATRACE_NAME("Pushing to statsd");
-                    android::util::stats_write(android::util::DISPLAY_JANK_REPORTED,
-                                               jankyDurationMillis, mMissedFrameJankCount);
-                }
+                android::util::stats_write(android::util::DISPLAY_JANK_REPORTED,
+                                           jankyDurationMillis, mMissedFrameJankCount);
             }
 
             // We either reported a jank event or we missed the trace
@@ -2716,6 +2704,8 @@ void SurfaceFlinger::postComposition()
         }
 
         mSmoMo->UpdateSmomoState(layers, fps);
+        int content_fps = mSmoMo->GetFrameRate();
+        SetContentFps((content_fps > 0) ? content_fps : fps);
     }
 
 
@@ -6780,6 +6770,35 @@ void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
             mRefreshRateOverlay->changeRefreshRate(mRefreshRateConfigs->getCurrentRefreshRate());
         }
     }));
+}
+
+void SurfaceFlinger::SetContentFps(int contentFps) {
+    // Called from SF main thread only, no lock needed.
+    if (!mBootFinished || !mPerfHintEnabled || mPerfHintPending || mSetActiveConfigPending) {
+        return;
+    }
+
+    if ((contentFps <= 0) || ((mPerfLockHandle > 0) &&
+        (std::abs(mContentFps - contentFps) <= CONTENT_FPS_CHANGE_LIMIT))) {
+        return;
+    }
+
+    ATRACE_CALL();
+    mPerfHintPending = true;
+    mContentFps = contentFps;
+
+    // Detach a worker thread to send the Content Frame Rate hint to Perf lib
+    std::thread worker(
+        [this](int content_rate) {
+            if (mPerfLockHandle > 0) {
+                mPerfLockReleaseFunc(mPerfLockHandle);
+            }
+
+            mPerfLockHandle = mPerfHintFunc(PERF_HINT_FPS_UPDATE, nullptr, INT_MAX, content_rate);
+            mPerfHintPending = false;
+        }, mContentFps);
+
+    worker.detach();
 }
 
 } // namespace android
