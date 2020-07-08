@@ -27,7 +27,10 @@
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/HidlTransportUtils.h>
 #include <vendor/qti/hardware/display/composer/2.1/IQtiComposerClient.h>
+
+#ifdef QCOM_UM_FAMILY
 #include <vendor/display/config/1.16/IDisplayConfig.h>
+#endif
 
 namespace android {
 
@@ -221,6 +224,7 @@ Composer::Composer(const std::string& serviceName)
         LOG_ALWAYS_FATAL("failed to create composer client");
     }
 
+#ifdef QCOM_UM_FAMILY
     // On successful creation of composer client only allowIdleFallback
     if (mClient) {
         using vendor::display::config::V1_16::IDisplayConfig;
@@ -231,6 +235,7 @@ Composer::Composer(const std::string& serviceName)
             }
         }
     }
+#endif
 
     if (mIsUsingVrComposer) {
         sp<IVrComposerClient> vrClient = IVrComposerClient::castFrom(mClient);
