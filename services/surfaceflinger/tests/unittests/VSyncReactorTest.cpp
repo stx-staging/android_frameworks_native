@@ -157,7 +157,8 @@ protected:
             mMockClock(std::make_shared<NiceMock<MockClock>>()),
             mReactor(std::make_unique<ClockWrapper>(mMockClock),
                      std::make_unique<VSyncDispatchWrapper>(mMockDispatch),
-                     std::make_unique<VSyncTrackerWrapper>(mMockTracker), kPendingLimit) {
+                     std::make_unique<VSyncTrackerWrapper>(mMockTracker), kPendingLimit,
+                     false /* supportKernelIdleTimer */) {
         ON_CALL(*mMockClock, now()).WillByDefault(Return(mFakeNow));
         ON_CALL(*mMockTracker, currentPeriod()).WillByDefault(Return(period));
     }
@@ -661,6 +662,43 @@ TEST_F(VSyncReactorTest, periodChangeWithGivenVsyncPeriod) {
     EXPECT_TRUE(periodFlushed);
 
     EXPECT_TRUE(mReactor.addPresentFence(generateSignalledFenceWithTime(0)));
+}
+
+TEST_F(VSyncReactorTest, periodIsMeasuredIfIgnoringComposer) {
+    // Create a reactor which supports the kernel idle timer
+    auto idleReactor = VSyncReactor(std::make_unique<ClockWrapper>(mMockClock),
+                                    std::make_unique<VSyncDispatchWrapper>(mMockDispatch),
+                                    std::make_unique<VSyncTrackerWrapper>(mMockTracker),
+                                    kPendingLimit, true /* supportKernelIdleTimer */);
+
+    bool periodFlushed = true;
+    EXPECT_CALL(*mMockTracker, addVsyncTimestamp(_)).Times(5);
+    idleReactor.setIgnorePresentFences(true);
+
+    // First, set the same period, which should only be confirmed when we receive two
+    // matching callbacks
+    idleReactor.setPeriod(10000);
+    EXPECT_TRUE(idleReactor.addResyncSample(0, 0, &periodFlushed));
+    EXPECT_FALSE(periodFlushed);
+    // Correct period but incorrect timestamp delta
+    EXPECT_TRUE(idleReactor.addResyncSample(0, 10000, &periodFlushed));
+    EXPECT_FALSE(periodFlushed);
+    // Correct period and correct timestamp delta
+    EXPECT_FALSE(idleReactor.addResyncSample(10000, 10000, &periodFlushed));
+    EXPECT_TRUE(periodFlushed);
+
+    // Then, set a new period, which should be confirmed as soon as we receive a callback
+    // reporting the new period
+    nsecs_t const newPeriod = 5000;
+    idleReactor.setPeriod(newPeriod);
+    // Incorrect timestamp delta and period
+    EXPECT_TRUE(idleReactor.addResyncSample(20000, 10000, &periodFlushed));
+    EXPECT_FALSE(periodFlushed);
+    // Incorrect timestamp delta but correct period
+    EXPECT_FALSE(idleReactor.addResyncSample(20000, 5000, &periodFlushed));
+    EXPECT_TRUE(periodFlushed);
+
+    EXPECT_TRUE(idleReactor.addPresentFence(generateSignalledFenceWithTime(0)));
 }
 
 using VSyncReactorDeathTest = VSyncReactorTest;

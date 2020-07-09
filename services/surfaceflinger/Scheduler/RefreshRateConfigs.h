@@ -29,7 +29,6 @@
 #include "Scheduler/StrongTyping.h"
 
 namespace android::scheduler {
-class RefreshRateConfigsTest;
 
 using namespace std::chrono_literals;
 
@@ -83,11 +82,13 @@ public:
             return configId != other.configId || hwcConfig != other.hwcConfig;
         }
 
+        bool operator<(const RefreshRate& other) const { return getFps() < other.getFps(); }
+
         bool operator==(const RefreshRate& other) const { return !(*this != other); }
 
     private:
         friend RefreshRateConfigs;
-        friend RefreshRateConfigsTest;
+        friend class RefreshRateConfigsTest;
 
         // The tolerance within which we consider FPS approximately equals.
         static constexpr float FPS_EPSILON = 0.001f;
@@ -194,15 +195,22 @@ public:
     // Captures the layer requirements for a refresh rate. This will be used to determine the
     // display refresh rate.
     struct LayerRequirement {
-        std::string name;         // Layer's name. Used for debugging purposes.
-        LayerVoteType vote;       // Layer vote type.
-        float desiredRefreshRate; // Layer's desired refresh rate, if applicable.
-        float weight; // Layer's weight in the range of [0, 1]. The higher the weight the more
-                      // impact this layer would have on choosing the refresh rate.
+        // Layer's name. Used for debugging purposes.
+        std::string name;
+        // Layer vote type.
+        LayerVoteType vote = LayerVoteType::NoVote;
+        // Layer's desired refresh rate, if applicable.
+        float desiredRefreshRate = 0.0f;
+        // Layer's weight in the range of [0, 1]. The higher the weight the more impact this layer
+        // would have on choosing the refresh rate.
+        float weight = 0.0f;
+        // Whether layer is in focus or not based on WindowManager's state
+        bool focused = false;
 
         bool operator==(const LayerRequirement& other) const {
             return name == other.name && vote == other.vote &&
-                    desiredRefreshRate == other.desiredRefreshRate && weight == other.weight;
+                    desiredRefreshRate == other.desiredRefreshRate && weight == other.weight &&
+                    focused == other.focused;
         }
 
         bool operator!=(const LayerRequirement& other) const { return !(*this == other); }
@@ -212,14 +220,22 @@ public:
     const RefreshRate& getRefreshRateForContent(const std::vector<LayerRequirement>& layers) const
             EXCLUDES(mLock);
 
+    // Global state describing signals that affect refresh rate choice.
+    struct GlobalSignals {
+        // Whether the user touched the screen recently. Used to apply touch boost.
+        bool touch = false;
+        // True if the system hasn't seen any buffers posted to layers recently.
+        bool idle = false;
+    };
+
     // Returns the refresh rate that fits best to the given layers.
     //   layers - The layer requirements to consider.
-    //   touchActive - Whether the user touched the screen recently. Used to apply touch boost.
-    //   idle - True if the system hasn't seen any buffers posted to layers recently.
-    //   touchConsidered - An output param that tells the caller whether the refresh rate was chosen
-    //                     based on touch boost.
+    //   globalSignals - global state of touch and idle
+    //   outSignalsConsidered - An output param that tells the caller whether the refresh rate was
+    //                          chosen based on touch boost and/or idle timer.
     const RefreshRate& getBestRefreshRate(const std::vector<LayerRequirement>& layers,
-                                          bool touchActive, bool idle, bool* touchConsidered) const
+                                          const GlobalSignals& globalSignals,
+                                          GlobalSignals* outSignalsConsidered = nullptr) const
             EXCLUDES(mLock);
 
     // Returns all the refresh rates supported by the device. This won't change at runtime.
@@ -258,11 +274,29 @@ public:
     // Returns a string that represents the layer vote type
     static std::string layerVoteTypeString(LayerVoteType vote);
 
+    // Returns a known frame rate that is the closest to frameRate
+    float findClosestKnownFrameRate(float frameRate) const;
+
     RefreshRateConfigs(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs,
                        HwcConfigIndexType currentConfigId);
 
+    // Class to enumerate options around toggling the kernel timer on and off. We have an option
+    // for no change to avoid extra calls to kernel.
+    enum class KernelIdleTimerAction {
+        NoChange, // Do not change the idle timer.
+        TurnOff,  // Turn off the idle timer.
+        TurnOn    // Turn on the idle timer.
+    };
+    // Checks whether kernel idle timer should be active depending the policy decisions around
+    // refresh rates.
+    KernelIdleTimerAction getIdleTimerAction() const;
+
 private:
+    friend class RefreshRateConfigsTest;
+
     void constructAvailableRefreshRates() REQUIRES(mLock);
+    static std::vector<float> constructKnownFrameRates(
+            const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs);
 
     void getSortedRefreshRateList(
             const std::function<bool(const RefreshRate&)>& shouldAddRefreshRate,
@@ -320,6 +354,10 @@ private:
     const RefreshRate* mMaxSupportedRefreshRate;
 
     mutable std::mutex mLock;
+
+    // A sorted list of known frame rates that a Heuristic layer will choose
+    // from based on the closest value.
+    const std::vector<float> mKnownFrameRates;
 };
 
 } // namespace android::scheduler

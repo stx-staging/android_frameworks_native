@@ -209,6 +209,10 @@ static int Open(std::string path, int flags, mode_t mode = 0) {
     return fd;
 }
 
+static int OpenForWrite(std::string path) {
+    return Open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+}
 
 static int OpenForRead(std::string path) {
     return Open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -274,6 +278,27 @@ int64_t GetModuleMetadataVersion() {
     return version_code;
 }
 
+static bool PathExists(const std::string& path) {
+  struct stat sb;
+  return stat(path.c_str(), &sb) == 0;
+}
+
+static bool CopyFileToFile(const std::string& input_file, const std::string& output_file) {
+    if (input_file == output_file) {
+        MYLOGD("Skipping copying bugreport file since the destination is the same (%s)\n",
+               output_file.c_str());
+        return false;
+    }
+    else if (PathExists(output_file)) {
+        MYLOGD("Cannot overwrite an existing file (%s)\n", output_file.c_str());
+        return false;
+    }
+
+    MYLOGD("Going to copy bugreport file (%s) to %s\n", input_file.c_str(), output_file.c_str());
+    android::base::unique_fd out_fd(OpenForWrite(output_file));
+    return CopyFileToFd(input_file, out_fd.get());
+}
+
 }  // namespace
 }  // namespace os
 }  // namespace android
@@ -305,8 +330,9 @@ static const CommandOptions AS_ROOT_20 = CommandOptions::WithTimeout(20).AsRoot(
 
 /*
  * Returns a vector of dump fds under |dir_path| with a given |file_prefix|.
- * The returned vector is sorted by the mtimes of the dumps. If |limit_by_mtime|
- * is set, the vector only contains files that were written in the last 30 minutes.
+ * The returned vector is sorted by the mtimes of the dumps with descending
+ * order. If |limit_by_mtime| is set, the vector only contains files that
+ * were written in the last 30 minutes.
  */
 static std::vector<DumpData> GetDumpFds(const std::string& dir_path,
                                         const std::string& file_prefix,
@@ -352,6 +378,10 @@ static std::vector<DumpData> GetDumpFds(const std::string& dir_path,
         }
 
         dump_data.emplace_back(DumpData{abs_path, std::move(fd), st.st_mtime});
+    }
+    if (!dump_data.empty()) {
+        std::sort(dump_data.begin(), dump_data.end(),
+            [](const auto& a, const auto& b) { return a.mtime > b.mtime; });
     }
 
     return dump_data;
@@ -1362,6 +1392,46 @@ static void DumpExternalFragmentationInfo() {
     printf("\n");
 }
 
+static void DumpstateLimitedOnly() {
+    // Trimmed-down version of dumpstate to only include a whitelisted
+    // set of logs (system log, event log, and system server / system app
+    // crashes, and networking logs). See b/136273873 and b/138459828
+    // for context.
+    DurationReporter duration_reporter("DUMPSTATE");
+    unsigned long timeout_ms;
+    // calculate timeout
+    timeout_ms = logcat_timeout({"main", "system", "crash"});
+    RunCommand("SYSTEM LOG",
+               {"logcat", "-v", "threadtime", "-v", "printable", "-v", "uid", "-d", "*:v"},
+               CommandOptions::WithTimeoutInMs(timeout_ms).Build());
+    timeout_ms = logcat_timeout({"events"});
+    RunCommand(
+        "EVENT LOG",
+        {"logcat", "-b", "events", "-v", "threadtime", "-v", "printable", "-v", "uid", "-d", "*:v"},
+        CommandOptions::WithTimeoutInMs(timeout_ms).Build());
+
+    printf("========================================================\n");
+    printf("== Networking Service\n");
+    printf("========================================================\n");
+
+    RunDumpsys("DUMPSYS NETWORK_SERVICE_LIMITED", {"wifi", "-a"},
+               CommandOptions::WithTimeout(90).Build(), SEC_TO_MSEC(10));
+
+    printf("========================================================\n");
+    printf("== Dropbox crashes\n");
+    printf("========================================================\n");
+
+    RunDumpsys("DROPBOX SYSTEM SERVER CRASHES", {"dropbox", "-p", "system_server_crash"});
+    RunDumpsys("DROPBOX SYSTEM APP CRASHES", {"dropbox", "-p", "system_app_crash"});
+
+    printf("========================================================\n");
+    printf("== Final progress (pid %d): %d/%d (estimated %d)\n", ds.pid_, ds.progress_->Get(),
+           ds.progress_->GetMax(), ds.progress_->GetInitialMax());
+    printf("========================================================\n");
+    printf("== dumpstate: done (id %d)\n", ds.id_);
+    printf("========================================================\n");
+}
+
 // Dumps various things. Returns early with status USER_CONSENT_DENIED if user denies consent
 // via the consent they are shown. Ignores other errors that occur while running various
 // commands. The consent checking is currently done around long running tasks, which happen to
@@ -2047,11 +2117,12 @@ void Dumpstate::DumpstateBoard() {
 
 static void ShowUsage() {
     fprintf(stderr,
-            "usage: dumpstate [-h] [-b soundfile] [-e soundfile] [-d] [-p] "
-            "[-z] [-s] [-S] [-q] [-P] [-R] [-V version]\n"
+            "usage: dumpstate [-h] [-b soundfile] [-e soundfile] [-o directory] [-d] [-p] "
+            "[-z] [-s] [-S] [-q] [-P] [-R] [-L] [-V version]\n"
             "  -h: display this help message\n"
             "  -b: play sound file instead of vibrate, at beginning of job\n"
             "  -e: play sound file instead of vibrate, at end of job\n"
+            "  -o: write to custom directory (only in limited mode)\n"
             "  -d: append date to filename\n"
             "  -p: capture screenshot to filename.png\n"
             "  -z: generate zipped file\n"
@@ -2061,6 +2132,7 @@ static void ShowUsage() {
             "  -P: send broadcast when started and do progress updates\n"
             "  -R: take bugreport in remote mode (requires -z and -d, shouldn't be used with -P)\n"
             "  -w: start binder service and make it wait for a call to startBugreport\n"
+            "  -L: output limited information that is safe for submission in feedback reports\n"
             "  -v: prints the dumpstate header and exit\n");
 }
 
@@ -2221,6 +2293,13 @@ static void FinalizeFile() {
             do_text_file = false;
         }
     }
+
+    std::string final_path = ds.path_;
+    if (ds.options_->OutputToCustomFile()) {
+        final_path = ds.GetPath(ds.options_->out_dir, ".zip");
+        android::os::CopyFileToFile(ds.path_, final_path);
+    }
+
     if (ds.options_->use_control_socket) {
         if (do_text_file) {
             dprintf(ds.control_socket_fd_,
@@ -2228,7 +2307,7 @@ static void FinalizeFile() {
                     "for more details\n",
                     ds.log_path_.c_str());
         } else {
-            dprintf(ds.control_socket_fd_, "OK:%s\n", ds.path_.c_str());
+            dprintf(ds.control_socket_fd_, "OK:%s\n", final_path.c_str());
         }
     }
 }
@@ -2306,13 +2385,12 @@ static void LogDumpOptions(const Dumpstate::DumpOptions& options) {
         "do_zip_file: %d do_vibrate: %d use_socket: %d use_control_socket: %d do_screenshot: %d "
         "is_remote_mode: %d show_header_only: %d do_start_service: %d telephony_only: %d "
         "wifi_only: %d do_progress_updates: %d fd: %d bugreport_mode: %s dumpstate_hal_mode: %s "
-        "args: %s\n",
+        "limited_only: %d args: %s\n",
         options.do_zip_file, options.do_vibrate, options.use_socket, options.use_control_socket,
         options.do_screenshot, options.is_remote_mode, options.show_header_only,
-        options.do_start_service,
-        options.telephony_only, options.wifi_only, options.do_progress_updates,
-        options.bugreport_fd.get(), options.bugreport_mode.c_str(),
-        toString(options.dumpstate_hal_mode).c_str(), options.args.c_str());
+        options.do_start_service, options.telephony_only, options.wifi_only,
+        options.do_progress_updates, options.bugreport_fd.get(), options.bugreport_mode.c_str(),
+        toString(options.dumpstate_hal_mode).c_str(), options.limited_only, options.args.c_str());
 }
 
 void Dumpstate::DumpOptions::Initialize(BugreportMode bugreport_mode,
@@ -2334,11 +2412,12 @@ void Dumpstate::DumpOptions::Initialize(BugreportMode bugreport_mode,
 Dumpstate::RunStatus Dumpstate::DumpOptions::Initialize(int argc, char* argv[]) {
     RunStatus status = RunStatus::OK;
     int c;
-    while ((c = getopt(argc, argv, "dho:svqzpPBRSV:w")) != -1) {
+    while ((c = getopt(argc, argv, "dho:svqzpLPBRSV:w")) != -1) {
         switch (c) {
             // clang-format off
             case 'd': do_add_date = true;            break;
             case 'z': do_zip_file = true;            break;
+            case 'o': out_dir = optarg;              break;
             case 's': use_socket = true;             break;
             case 'S': use_control_socket = true;     break;
             case 'v': show_header_only = true;       break;
@@ -2346,6 +2425,7 @@ Dumpstate::RunStatus Dumpstate::DumpOptions::Initialize(int argc, char* argv[]) 
             case 'p': do_screenshot = true;          break;
             case 'P': do_progress_updates = true;    break;
             case 'R': is_remote_mode = true;         break;
+            case 'L': limited_only = true;           break;
             case 'V':                                break;  // compatibility no-op
             case 'w':
                 // This was already processed
@@ -2459,8 +2539,8 @@ void Dumpstate::Cancel() {
  * If zipping, a bunch of other files and dumps also get added to the zip archive. The log file also
  * gets added to the archive.
  *
- * Bugreports are first generated in a local directory and later copied to the caller's fd if
- * supplied.
+ * Bugreports are first generated in a local directory and later copied to the caller's fd
+ * or directory if supplied.
  */
 Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
                                             const std::string& calling_package) {
@@ -2630,6 +2710,7 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
     // duration is logged into MYLOG instead.
     PrintHeader();
 
+    // TODO(b/158737089) reduce code repetition in if branches
     if (options_->telephony_only) {
         MaybeTakeEarlyScreenshot();
         onUiIntensiveBugreportDumpsFinished(calling_uid, calling_package);
@@ -2641,6 +2722,11 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
         onUiIntensiveBugreportDumpsFinished(calling_uid, calling_package);
         MaybeCheckUserConsent(calling_uid, calling_package);
         DumpstateWifiOnly();
+    } else if (options_->limited_only) {
+        MaybeTakeEarlyScreenshot();
+        onUiIntensiveBugreportDumpsFinished(calling_uid, calling_package);
+        MaybeCheckUserConsent(calling_uid, calling_package);
+        DumpstateLimitedOnly();
     } else {
         // Invoke critical dumpsys first to preserve system state, before doing anything else.
         RunDumpsysCritical();

@@ -58,37 +58,32 @@ bool useFrameRatePriority() {
     return atoi(value);
 }
 
-void trace(const wp<Layer>& weak, LayerHistory::LayerVoteType type, int fps) {
+void trace(const wp<Layer>& weak, const LayerInfoV2& info, LayerHistory::LayerVoteType type,
+           int fps) {
     const auto layer = weak.promote();
     if (!layer) return;
 
-    const auto makeTag = [layer](LayerHistory::LayerVoteType vote) {
-        return "LFPS " + RefreshRateConfigs::layerVoteTypeString(vote) + " " + layer->getName();
+    const auto traceType = [&](LayerHistory::LayerVoteType checkedType, int value) {
+        ATRACE_INT(info.getTraceTag(checkedType), type == checkedType ? value : 0);
     };
 
-    const auto noVoteTag = makeTag(LayerHistory::LayerVoteType::NoVote);
-    const auto heuristicVoteTag = makeTag(LayerHistory::LayerVoteType::Heuristic);
-    const auto explicitDefaultVoteTag = makeTag(LayerHistory::LayerVoteType::ExplicitDefault);
-    const auto explicitExactOrMultipleVoteTag =
-            makeTag(LayerHistory::LayerVoteType::ExplicitExactOrMultiple);
-    const auto minVoteTag = makeTag(LayerHistory::LayerVoteType::Min);
-    const auto maxVoteTag = makeTag(LayerHistory::LayerVoteType::Max);
-
-    ATRACE_INT(noVoteTag.c_str(), type == LayerHistory::LayerVoteType::NoVote ? 1 : 0);
-    ATRACE_INT(heuristicVoteTag.c_str(), type == LayerHistory::LayerVoteType::Heuristic ? fps : 0);
-    ATRACE_INT(explicitDefaultVoteTag.c_str(),
-               type == LayerHistory::LayerVoteType::ExplicitDefault ? fps : 0);
-    ATRACE_INT(explicitExactOrMultipleVoteTag.c_str(),
-               type == LayerHistory::LayerVoteType::ExplicitExactOrMultiple ? fps : 0);
-    ATRACE_INT(minVoteTag.c_str(), type == LayerHistory::LayerVoteType::Min ? 1 : 0);
-    ATRACE_INT(maxVoteTag.c_str(), type == LayerHistory::LayerVoteType::Max ? 1 : 0);
+    traceType(LayerHistory::LayerVoteType::NoVote, 1);
+    traceType(LayerHistory::LayerVoteType::Heuristic, fps);
+    traceType(LayerHistory::LayerVoteType::ExplicitDefault, fps);
+    traceType(LayerHistory::LayerVoteType::ExplicitExactOrMultiple, fps);
+    traceType(LayerHistory::LayerVoteType::Min, 1);
+    traceType(LayerHistory::LayerVoteType::Max, 1);
 
     ALOGD("%s: %s @ %d Hz", __FUNCTION__, layer->getName().c_str(), fps);
 }
 } // namespace
 
-LayerHistoryV2::LayerHistoryV2()
-      : mTraceEnabled(traceEnabled()), mUseFrameRatePriority(useFrameRatePriority()) {}
+LayerHistoryV2::LayerHistoryV2(const scheduler::RefreshRateConfigs& refreshRateConfigs)
+      : mTraceEnabled(traceEnabled()), mUseFrameRatePriority(useFrameRatePriority()) {
+    LayerInfoV2::setTraceEnabled(mTraceEnabled);
+    LayerInfoV2::setRefreshRateConfigs(refreshRateConfigs);
+}
+
 LayerHistoryV2::~LayerHistoryV2() = default;
 
 void LayerHistoryV2::registerLayer(Layer* layer, float /*lowRefreshRate*/, float highRefreshRate,
@@ -99,7 +94,8 @@ void LayerHistoryV2::registerLayer(Layer* layer, float /*lowRefreshRate*/, float
     mLayerInfos.emplace_back(layer, std::move(info));
 }
 
-void LayerHistoryV2::record(Layer* layer, nsecs_t presentTime, nsecs_t now) {
+void LayerHistoryV2::record(Layer* layer, nsecs_t presentTime, nsecs_t now,
+                            LayerUpdateType updateType) {
     std::lock_guard lock(mLock);
 
     const auto it = std::find_if(mLayerInfos.begin(), mLayerInfos.end(),
@@ -107,7 +103,7 @@ void LayerHistoryV2::record(Layer* layer, nsecs_t presentTime, nsecs_t now) {
     LOG_FATAL_IF(it == mLayerInfos.end(), "%s: unknown layer %p", __FUNCTION__, layer);
 
     const auto& info = it->second;
-    info->setLastPresentTime(presentTime, now, mConfigChangePending);
+    info->setLastPresentTime(presentTime, now, updateType, mConfigChangePending);
 
     // Activate layer if inactive.
     if (const auto end = activeLayers().end(); it >= end) {
@@ -129,9 +125,10 @@ LayerHistoryV2::Summary LayerHistoryV2::summarize(nsecs_t now) {
             continue;
         }
 
-        // TODO(b/144307188): This needs to be plugged into layer summary as
-        //  an additional parameter.
-        ALOGV("Layer has priority: %d", strong->getFrameRateSelectionPriority());
+        const auto frameRateSelectionPriority = strong->getFrameRateSelectionPriority();
+        const auto layerFocused = Layer::isLayerFocusedBasedOnPriority(frameRateSelectionPriority);
+        ALOGV("%s has priority: %d %s focused", strong->getName().c_str(),
+              frameRateSelectionPriority, layerFocused ? "" : "not");
 
         const auto [type, refreshRate] = info->getRefreshRate(now);
         // Skip NoVote layer as those don't have any requirements
@@ -147,10 +144,10 @@ LayerHistoryV2::Summary LayerHistoryV2::summarize(nsecs_t now) {
 
         const float layerArea = transformed.getWidth() * transformed.getHeight();
         float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
-        summary.push_back({strong->getName(), type, refreshRate, weight});
+        summary.push_back({strong->getName(), type, refreshRate, weight, layerFocused});
 
         if (CC_UNLIKELY(mTraceEnabled)) {
-            trace(layer, type, static_cast<int>(std::round(refreshRate)));
+            trace(layer, *info, type, static_cast<int>(std::round(refreshRate)));
         }
     }
 
@@ -189,7 +186,7 @@ void LayerHistoryV2::partitionLayers(nsecs_t now) {
         }
 
         if (CC_UNLIKELY(mTraceEnabled)) {
-            trace(weak, LayerHistory::LayerVoteType::NoVote, 0);
+            trace(weak, *info, LayerHistory::LayerVoteType::NoVote, 0);
         }
 
         info->onLayerInactive(now);
@@ -216,4 +213,5 @@ void LayerHistoryV2::clear() {
         info->clearHistory(systemTime());
     }
 }
+
 } // namespace android::scheduler::impl

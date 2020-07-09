@@ -94,7 +94,16 @@ struct LayerCreationArgs {
 
 class Layer : public virtual RefBase, compositionengine::LayerFE {
     static std::atomic<int32_t> sSequence;
+    // The following constants represent priority of the window. SF uses this information when
+    // deciding which window has a priority when deciding about the refresh rate of the screen.
+    // Priority 0 is considered the highest priority. -1 means that the priority is unset.
     static constexpr int32_t PRIORITY_UNSET = -1;
+    // Windows that are in focus and voted for the preferred mode ID
+    static constexpr int32_t PRIORITY_FOCUSED_WITH_MODE = 0;
+    // // Windows that are in focus, but have not requested a specific mode ID.
+    static constexpr int32_t PRIORITY_FOCUSED_WITHOUT_MODE = 1;
+    // Windows that are not in focus, but voted for a specific mode ID.
+    static constexpr int32_t PRIORITY_NOT_FOCUSED_WITH_MODE = 2;
 
 public:
     mutable bool contentDirty{false};
@@ -400,6 +409,7 @@ public:
     //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
+    static bool isLayerFocusedBasedOnPriority(int32_t priority);
 
     virtual ui::Dataspace getDataSpace() const { return ui::Dataspace::UNKNOWN; }
 
@@ -817,8 +827,6 @@ public:
         return parentBounds;
     }
 
-    Region getVisibleNonTransparentRegion() const;
-
     /**
      * Returns the cropped buffer size or the layer crop if the layer has no buffer. Return
      * INVALID_RECT if the layer has no buffer and no crop.
@@ -952,7 +960,17 @@ public:
     void setInputInfo(const InputWindowInfo& info);
 
     InputWindowInfo fillInputInfo();
-    bool hasInput() const;
+    /**
+     * Returns whether this layer has an explicitly set input-info.
+     */
+    bool hasInputInfo() const;
+    /**
+     * Return whether this layer needs an input info. For most layer types
+     * this is only true if they explicitly set an input-info but BufferLayer
+     * overrides this so we can generate input-info for Buffered layers that don't
+     * have them (for input occlusion detection checks).
+     */
+    virtual bool needsInputInfo() const { return hasInputInfo(); }
 
     compositionengine::OutputLayer* findOutputLayerForDisplay(const DisplayDevice*) const;
 
@@ -1095,6 +1113,10 @@ private:
     // Find the root of the cloned hierarchy, this means the first non cloned parent.
     // This will return null if first non cloned parent is not found.
     sp<Layer> getClonedRoot();
+
+    // Finds the top most layer in the hierarchy. This will find the root Layer where the parent is
+    // null.
+    sp<Layer> getRootLayer();
 };
 
 } // namespace android

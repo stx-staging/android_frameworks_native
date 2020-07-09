@@ -121,6 +121,13 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.treeHasFrameRateVote = false;
     mCurrentState.fixedTransformHint = ui::Transform::ROT_INVALID;
 
+    if (args.flags & ISurfaceComposerClient::eNoColorFill) {
+        // Set an invalid color so there is no color fill.
+        mCurrentState.color.r = -1.0_hf;
+        mCurrentState.color.g = -1.0_hf;
+        mCurrentState.color.b = -1.0_hf;
+    }
+
     // drawing state & current state are identical
     mDrawingState = mCurrentState;
 
@@ -224,13 +231,23 @@ void Layer::removeFromCurrentState() {
     mFlinger->markLayerPendingRemovalLocked(this);
 }
 
+sp<Layer> Layer::getRootLayer() {
+    sp<Layer> parent = getParent();
+    if (parent == nullptr) {
+        return this;
+    }
+    return parent->getRootLayer();
+}
+
 void Layer::onRemovedFromCurrentState() {
-    auto layersInTree = getLayersInTree(LayerVector::StateSet::Current);
+    // Use the root layer since we want to maintain the hierarchy for the entire subtree.
+    auto layersInTree = getRootLayer()->getLayersInTree(LayerVector::StateSet::Current);
     std::sort(layersInTree.begin(), layersInTree.end());
-    for (const auto& layer : layersInTree) {
+
+    traverse(LayerVector::StateSet::Current, [&](Layer* layer) {
         layer->removeFromCurrentState();
         layer->removeRelativeZ(layersInTree);
-    }
+    });
 }
 
 void Layer::addToCurrentState() {
@@ -864,11 +881,13 @@ bool Layer::applyPendingStates(State* stateToCommit) {
         }
     }
 
-    // If we still have pending updates, wake SurfaceFlinger back up and point
-    // it at this layer so we can process them
+    // If we still have pending updates, we need to ensure SurfaceFlinger
+    // will keep calling doTransaction, and so we force a traversal.
+    // However, our pending states won't clear until a frame is available,
+    // and so there is no need to specifically trigger a wakeup.
     if (!mPendingStates.empty()) {
         setTransactionFlags(eTransactionNeeded);
-        mFlinger->setTransactionFlags(eTraversalNeeded);
+        mFlinger->setTraversalNeeded();
     }
 
     mCurrentState.modified = false;
@@ -1322,6 +1341,10 @@ int32_t Layer::getFrameRateSelectionPriority() const {
     return Layer::PRIORITY_UNSET;
 }
 
+bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
+    return priority == PRIORITY_FOCUSED_WITH_MODE || priority == PRIORITY_FOCUSED_WITHOUT_MODE;
+};
+
 uint32_t Layer::getLayerStack() const {
     auto p = mDrawingParent.promote();
     if (p == nullptr) {
@@ -1408,7 +1431,8 @@ bool Layer::setFrameRate(FrameRate frameRate) {
     }
 
     // Activate the layer in Scheduler's LayerHistory
-    mFlinger->mScheduler->recordLayerHistory(this, systemTime());
+    mFlinger->mScheduler->recordLayerHistory(this, systemTime(),
+                                             LayerHistory::LayerUpdateType::SetFrameRate);
 
     mCurrentState.sequence++;
     mCurrentState.frameRate = frameRate;
@@ -1506,7 +1530,7 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
     LayerDebugInfo info;
     const State& ds = getDrawingState();
     info.mName = getName();
-    sp<Layer> parent = getParent();
+    sp<Layer> parent = mDrawingParent.promote();
     info.mParentName = parent ? parent->getName() : "none"s;
     info.mType = getType();
     info.mTransparentRegion = ds.activeTransparentRegion_legacy;
@@ -1554,7 +1578,7 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append("-------------------------------");
     result.append("-------------------------------");
     result.append("-------------------------------");
-    result.append("---------\n");
+    result.append("-------------------\n");
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
@@ -1563,12 +1587,12 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
     result.append("         Source Crop (LTRB) | ");
-    result.append("    Frame Rate (Explicit)\n");
+    result.append("    Frame Rate (Explicit) [Focused]\n");
     result.append("-------------------------------");
     result.append("-------------------------------");
     result.append("-------------------------------");
     result.append("-------------------------------");
-    result.append("---------\n");
+    result.append("-------------------\n");
 }
 
 std::string Layer::frameRateCompatibilityString(Layer::FrameRateCompatibility compatibility) {
@@ -1620,17 +1644,20 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
                   crop.bottom);
     if (layerState.frameRate.rate != 0 ||
         layerState.frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "% 6.2ffps %15s\n", layerState.frameRate.rate,
+        StringAppendF(&result, "% 6.2ffps %15s", layerState.frameRate.rate,
                       frameRateCompatibilityString(layerState.frameRate.type).c_str());
     } else {
-        StringAppendF(&result, "\n");
+        StringAppendF(&result, "                         ");
     }
+
+    const auto focused = isLayerFocusedBasedOnPriority(getFrameRateSelectionPriority());
+    StringAppendF(&result, "    [%s]\n", focused ? "*" : " ");
 
     result.append("- - - - - - - - - - - - - - - - ");
     result.append("- - - - - - - - - - - - - - - - ");
     result.append("- - - - - - - - - - - - - - - - ");
     result.append("- - - - - - - - - - - - - - - - ");
-    result.append("- - -\n");
+    result.append("- - - - - - - -\n");
 }
 
 void Layer::dumpFrameStats(std::string& result) const {
@@ -2129,7 +2156,9 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
             // but a transform matrix can define horizontal and vertical scales.
             // Let's take the average between both of them and pass into the shader, practically we
             // never do this type of transformation on windows anyway.
-            parentState.radius *= (t[0][0] + t[1][1]) / 2.0f;
+            auto scaleX = sqrtf(t[0][0] * t[0][0] + t[0][1] * t[0][1]);
+            auto scaleY = sqrtf(t[1][0] * t[1][0] + t[1][1] * t[1][1]);
+            parentState.radius *= (scaleX + scaleY) / 2.0f;
             return parentState;
         }
     }
@@ -2348,6 +2377,16 @@ bool Layer::isRemovedFromCurrentState() const  {
 }
 
 InputWindowInfo Layer::fillInputInfo() {
+    if (!hasInputInfo()) {
+        mDrawingState.inputInfo.name = getName();
+        mDrawingState.inputInfo.ownerUid = mCallingUid;
+        mDrawingState.inputInfo.ownerPid = mCallingPid;
+        mDrawingState.inputInfo.inputFeatures =
+            InputWindowInfo::INPUT_FEATURE_NO_INPUT_CHANNEL;
+        mDrawingState.inputInfo.layoutParamsFlags = InputWindowInfo::FLAG_NOT_TOUCH_MODAL;
+        mDrawingState.inputInfo.displayId = getLayerStack();
+    }
+
     InputWindowInfo info = mDrawingState.inputInfo;
     info.id = sequence;
 
@@ -2393,7 +2432,15 @@ InputWindowInfo Layer::fillInputInfo() {
     // Position the touchable region relative to frame screen location and restrict it to frame
     // bounds.
     info.touchableRegion = info.touchableRegion.translate(info.frameLeft, info.frameTop);
-    info.visible = canReceiveInput();
+    // For compatibility reasons we let layers which can receive input
+    // receive input before they have actually submitted a buffer. Because
+    // of this we use canReceiveInput instead of isVisible to check the
+    // policy-visibility, ignoring the buffer state. However for layers with
+    // hasInputInfo()==false we can use the real visibility state.
+    // We are just using these layers for occlusion detection in
+    // InputDispatcher, and obviously if they aren't visible they can't occlude
+    // anything.
+    info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
 
     auto cropLayer = mDrawingState.touchableRegionCrop.promote();
     if (info.replaceTouchableRegionWithCrop) {
@@ -2429,7 +2476,7 @@ sp<Layer> Layer::getClonedRoot() {
     return mDrawingParent.promote()->getClonedRoot();
 }
 
-bool Layer::hasInput() const {
+bool Layer::hasInputInfo() const {
     return mDrawingState.inputInfo.token != nullptr;
 }
 
@@ -2446,20 +2493,6 @@ compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
 Region Layer::getVisibleRegion(const DisplayDevice* display) const {
     const auto outputLayer = findOutputLayerForDisplay(display);
     return outputLayer ? outputLayer->getState().visibleRegion : Region();
-}
-
-Region Layer::getVisibleNonTransparentRegion() const {
-    sp<const DisplayDevice> displayDevice = mFlinger->getDefaultDisplayDevice();
-    if (displayDevice == nullptr) {
-        return {};
-    }
-
-    auto outputLayer = findOutputLayerForDisplay(displayDevice.get());
-    if (outputLayer == nullptr) {
-        return {};
-    }
-
-    return outputLayer->getState().visibleNonTransparentRegion;
 }
 
 void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom) {

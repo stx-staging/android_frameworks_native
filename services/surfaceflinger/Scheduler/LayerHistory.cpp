@@ -79,7 +79,8 @@ void LayerHistory::registerLayer(Layer* layer, float lowRefreshRate, float highR
     mLayerInfos.emplace_back(layer, std::move(info));
 }
 
-void LayerHistory::record(Layer* layer, nsecs_t presentTime, nsecs_t now) {
+void LayerHistory::record(Layer* layer, nsecs_t presentTime, nsecs_t now,
+                          LayerUpdateType /*updateType*/) {
     std::lock_guard lock(mLock);
 
     const auto it = std::find_if(mLayerInfos.begin(), mLayerInfos.end(),
@@ -108,6 +109,8 @@ LayerHistory::Summary LayerHistory::summarize(nsecs_t now) {
         auto layer = weakLayer.promote();
         // Only use the layer if the reference still exists.
         if (layer || CC_UNLIKELY(mTraceEnabled)) {
+            const auto layerFocused =
+                    Layer::isLayerFocusedBasedOnPriority(layer->getFrameRateSelectionPriority());
             // Check if frame rate was set on layer.
             const auto frameRate = layer->getFrameRateForLayerTree();
             if (frameRate.rate > 0.f) {
@@ -121,11 +124,12 @@ LayerHistory::Summary LayerHistory::summarize(nsecs_t now) {
                             return LayerVoteType::NoVote;
                     }
                 }();
-                summary.push_back({layer->getName(), voteType, frameRate.rate, /* weight */ 1.0f});
+                summary.push_back({layer->getName(), voteType, frameRate.rate, /* weight */ 1.0f,
+                                   layerFocused});
             } else if (recent) {
                 summary.push_back({layer->getName(), LayerVoteType::Heuristic,
                                    info->getRefreshRate(now),
-                                   /* weight */ 1.0f});
+                                   /* weight */ 1.0f, layerFocused});
             }
 
             if (CC_UNLIKELY(mTraceEnabled)) {

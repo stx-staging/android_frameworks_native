@@ -31,6 +31,7 @@
 #include "SurfaceInterceptor.h"
 
 #include "FrameTracer/FrameTracer.h"
+#include "Scheduler/LayerHistory.h"
 #include "TimeStats/TimeStats.h"
 
 #include "frame_extn_intf.h"
@@ -414,7 +415,8 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
     // Add this buffer from our internal queue tracker
     { // Autolock scope
         const nsecs_t presentTime = item.mIsAutoTimestamp ? 0 : item.mTimestamp;
-        mFlinger->mScheduler->recordLayerHistory(this, presentTime);
+        mFlinger->mScheduler->recordLayerHistory(this, presentTime,
+                                                 LayerHistory::LayerUpdateType::Buffer);
 
         Mutex::Autolock lock(mQueueItemLock);
         // Reset the frame number tracker when we receive the first buffer after
@@ -465,18 +467,12 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
         frameInfo.vsync_timestamp = mFlinger->mVsyncTimeStamp;
         frameInfo.refresh_timestamp = mFlinger->mRefreshTimeStamp;
         frameInfo.ref_latency = mFrameTracker.getPreviousGfxInfo();
-        {
-            Mutex::Autolock lock(mFlinger->mStateLock);
-            frameInfo.vsync_period = mFlinger->mVsyncPeriod;
-        }
-        mLastTimeStamp = frameInfo.current_timestamp;
-        {
-            Mutex::Autolock lock(mFlinger->mDolphinStateLock);
-            frameInfo.transparent_region = this->getVisibleNonTransparentRegion().isEmpty();
-        }
+        frameInfo.vsync_period = mFlinger->mVsyncPeriod;
+        frameInfo.transparent_region = !this->isOpaque(mDrawingState);
         frameInfo.width = item.mGraphicBuffer->getWidth();
         frameInfo.height = item.mGraphicBuffer->getHeight();
         frameInfo.layer_name = this->getName().c_str();
+        mLastTimeStamp = frameInfo.current_timestamp;
         mFlinger->mFrameExtn->SetFrameInfo(frameInfo);
     }
 
