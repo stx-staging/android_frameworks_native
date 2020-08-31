@@ -358,7 +358,9 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
 
         bool vsyncRequested = false;
 
+#ifdef QCOM_UM_FAMILY
         int aliveCount = 0;
+#endif
         // Find connections that should consume this event.
         auto it = mDisplayEventConnections.begin();
         while (it != mDisplayEventConnections.end()) {
