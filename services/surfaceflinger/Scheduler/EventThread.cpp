@@ -210,7 +210,9 @@ EventThread::EventThread(VSyncSource* src, std::unique_ptr<VSyncSource> uniqueSr
 
 EventThread::~EventThread() {
     mVSyncSource->setCallback(nullptr);
+#ifdef QCOM_UM_FAMILY
     if(mDolphinCheck)dlclose(mDolphinHandle);
+#endif
 
     {
         std::lock_guard<std::mutex> lock(mMutex);
@@ -365,8 +367,10 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
 
                 if (event && shouldConsumeEvent(*event, connection)) {
                     consumers.push_back(connection);
+#ifdef QCOM_UM_FAMILY
                     if (mDolphinCheck)
                         aliveCount++;
+#endif
                 }
 
                 ++it;
@@ -374,6 +378,7 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
                 it = mDisplayEventConnections.erase(it);
             }
         }
+#ifdef QCOM_UM_FAMILY
         if (mDolphinCheck) {
             if (event && aliveCount == 0 && mDolphinCheck(mThreadName)) {
                 auto it = mDisplayEventConnections.begin();
@@ -386,6 +391,7 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
                 }
             }
         }
+#endif
 
         if (!consumers.empty()) {
             dispatchEvent(*event, consumers);
