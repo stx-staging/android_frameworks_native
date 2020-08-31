@@ -4291,9 +4291,11 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<DisplayDevice>& displayDevice,
         firstLayer = false;
     }
 
+#ifdef QCOM_UM_FAMILY
     if (mSplitLayerExt && mLayerExt) {
         mLayerExt->updateLayerState(layers, mNumLayers);
     }
+#endif
 
     // Perform some cleanup steps if we used client composition.
     if (hasClientComposition) {
