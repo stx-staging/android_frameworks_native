@@ -525,6 +525,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 #else
     mUseSmoMo = false;
     mUseLayerExt = false;
+    mSplitLayerExt = false;
 #endif
 
 #ifdef QCOM_UM_FAMILY
@@ -850,6 +851,8 @@ void SurfaceFlinger::init() {
             renderengine::RenderEngine::create(static_cast<int32_t>(defaultCompositionPixelFormat),
                                                renderEngineFeature, maxFrameBufferAcquiredBuffers));
 
+    ALOGI("Set render engine.");
+
     LOG_ALWAYS_FATAL_IF(mVrFlingerRequestsDisplay,
             "Starting with vr flinger active is not currently supported.");
     mCompositionEngine->setHwComposer(getFactory().createHWComposer(getBE().mHwcServiceName));
@@ -891,7 +894,11 @@ void SurfaceFlinger::init() {
     // set initial conditions (e.g. unblank default device)
     initializeDisplays();
 
+    ALOGI("Initialized displays.");
+
     getRenderEngine().primeCache();
+
+    ALOGI("Primed render engine cache.");
 
     // Inform native graphics APIs whether the present timestamp is supported:
 
