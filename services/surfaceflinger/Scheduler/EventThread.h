@@ -216,8 +216,10 @@ private:
     State mState GUARDED_BY(mMutex) = State::Idle;
 
     static const char* toCString(State);
+#ifdef QCOM_UM_FAMILY
     void *mDolphinHandle = nullptr;
     bool (*mDolphinCheck)(const char* name) = nullptr;
+#endif
 };
 
 // ---------------------------------------------------------------------------

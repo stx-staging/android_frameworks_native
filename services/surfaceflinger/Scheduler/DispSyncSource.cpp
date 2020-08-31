@@ -40,6 +40,8 @@ DispSyncSource::DispSyncSource(DispSync* dispSync, nsecs_t phaseOffset,
         mDispSync(dispSync),
         mPhaseOffset(phaseOffset),
         mOffsetThresholdForNextVsync(offsetThresholdForNextVsync) {
+
+#ifdef QCOM_UM_FAMILY
         mDolphinHandle = dlopen("libdolphin.so", RTLD_NOW);
         if (!mDolphinHandle) {
             ALOGW("Unable to open libdolphin.so: %s.", dlerror());
@@ -47,6 +49,8 @@ DispSyncSource::DispSyncSource(DispSync* dispSync, nsecs_t phaseOffset,
             mDolphinCheck = (bool (*) (const char*))dlsym(mDolphinHandle, "dolphinCheck");
             if (!mDolphinCheck) dlclose(mDolphinHandle);
         }
+#endif
+
 }
 
 DispSyncSource::~DispSyncSource() {
