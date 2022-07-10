@@ -56,6 +56,9 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "smomo_interface.h"
+#include "layer_extn_intf.h"
+
 namespace android {
 
 using gui::WindowInfo;
@@ -72,6 +75,10 @@ BufferLayer::BufferLayer(const LayerCreationArgs& args)
 
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
+
+    if (mFlinger->mLayerExt) {
+        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
+    }
 }
 
 BufferLayer::~BufferLayer() {
@@ -566,6 +573,19 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
 
     if (oldOpacity != isOpaque(s)) {
         recomputeVisibleRegions = true;
+    }
+
+    const uint32_t layerStackId = getLayerStack();
+    SmomoIntf *smoMo = nullptr;
+    for (auto &instance: mFlinger->mSmomoInstances) {
+        if (instance.layerStackId == layerStackId) {
+            smoMo = instance.smoMo;
+            break;
+        }
+    }
+
+    if (smoMo) {
+        smoMo->SetPresentTime(getSequence(), mBufferInfo.mDesiredPresentTime);
     }
 
     return true;

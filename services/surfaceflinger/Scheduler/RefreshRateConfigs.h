@@ -262,6 +262,9 @@ public:
                                    GlobalSignals* outSignalsConsidered = nullptr) const
             EXCLUDES(mLock);
 
+    // Returns all the refresh rates supported by the device. This won't change at runtime. 
+    const AllRefreshRatesMapType& getAllRefreshRates() const EXCLUDES(mLock);
+
     FpsRange getSupportedRefreshRateRange() const EXCLUDES(mLock) {
         std::lock_guard lock(mLock);
         return {mMinSupportedRefreshRate->getFps(), mMaxSupportedRefreshRate->getFps()};

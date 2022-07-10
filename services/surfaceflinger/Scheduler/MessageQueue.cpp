@@ -29,6 +29,8 @@
 #include "MessageQueue.h"
 #include "SurfaceFlinger.h"
 
+#include "smomo_interface.h"
+
 namespace android::impl {
 
 void MessageQueue::Handler::dispatchRefresh() {
@@ -48,6 +50,12 @@ void MessageQueue::Handler::dispatchInvalidate(int64_t vsyncId, nsecs_t expected
 bool MessageQueue::Handler::invalidatePending() {
     constexpr auto pendingMask = eventMaskInvalidate | eventMaskRefresh;
     return (mEventMask.load() & pendingMask) != 0;
+}
+
+void MessageQueue::Handler::dispatchInvalidateImmed() {
+    if ((mEventMask.fetch_or(eventMaskInvalidate) & eventMaskInvalidate) == 0) {
+        mQueue.mLooper->sendMessage(this, Message(MessageQueue::INVALIDATE));
+    }
 }
 
 void MessageQueue::Handler::handleMessage(const Message& message) {
@@ -112,6 +120,19 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
         mVsync.lastCallbackTime = std::chrono::nanoseconds(vsyncTime);
         mVsync.scheduled = false;
     }
+
+    if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
+        mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
+    }
+
+    SmomoIntf *smoMo = nullptr;
+    for (auto &instance: mFlinger->mSmomoInstances) {
+        smoMo = instance.smoMo;
+        if (smoMo) {
+            smoMo->OnVsync(vsyncTime);
+        }
+    }
+
     mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
                                          {targetWakeupTime, readyTime, vsyncTime}),
                                  vsyncTime);
@@ -168,6 +189,12 @@ void MessageQueue::postMessage(sp<MessageHandler>&& handler) {
     mLooper->sendMessage(handler, Message());
 }
 
+void MessageQueue::invalidateImmed() {
+    ATRACE_CALL();
+
+    mHandler->dispatchInvalidateImmed();
+}
+
 void MessageQueue::invalidate() {
     ATRACE_CALL();
 
@@ -198,6 +225,7 @@ void MessageQueue::injectorCallback() {
     while ((n = DisplayEventReceiver::getEvents(&mInjector.tube, buffer, 8)) > 0) {
         for (int i = 0; i < n; i++) {
             if (buffer[i].header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
+                mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
                 mHandler->dispatchInvalidate(buffer[i].vsync.vsyncId,
                                              buffer[i].vsync.expectedVSyncTimestamp);
                 break;

@@ -34,7 +34,9 @@
 #include <vector>
 
 #include "Hal.h"
-
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 namespace android {
 
 class Fence;
@@ -52,7 +54,9 @@ namespace HWC2 {
 class Layer;
 
 namespace hal = android::hardware::graphics::composer::hal;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 // Implement this interface to receive hardware composer events.
 //
 // These callback functions will generally be called on a hwbinder thread, but
@@ -146,6 +150,14 @@ public:
     [[clang::warn_unused_result]] virtual hal::Error setContentType(hal::ContentType) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getClientTargetProperty(
             hal::ClientTargetProperty* outClientTargetProperty) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setDisplayElapseTime(uint64_t timeStamp) = 0;
+#ifdef QTI_UNIFIED_DRAW
+    [[clang::warn_unused_result]] virtual hal::Error setClientTarget_3_1(
+            int32_t slot, const android::sp<android::Fence>& acquireFence,
+            hal::Dataspace dataspace) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error tryDrawMethod(
+            IQtiComposerClient::DrawMethod drawMethod) = 0;
+#endif
 };
 
 namespace impl {
@@ -209,7 +221,12 @@ public:
             std::vector<hal::ContentType>* outSupportedContentTypes) const override;
     hal::Error setContentType(hal::ContentType) override;
     hal::Error getClientTargetProperty(hal::ClientTargetProperty* outClientTargetProperty) override;
-
+    hal::Error setDisplayElapseTime(uint64_t timeStamp) override;
+#ifdef QTI_UNIFIED_DRAW
+    hal::Error setClientTarget_3_1(int32_t slot, const android::sp<android::Fence>& acquireFence,
+            hal::Dataspace dataspace) override;
+    hal::Error tryDrawMethod(IQtiComposerClient::DrawMethod drawMethod) override;
+#endif
     // Other Display methods
     hal::HWDisplayId getId() const override { return mId; }
     bool isConnected() const override { return mIsConnected; }
@@ -279,6 +296,7 @@ public:
     [[clang::warn_unused_result]] virtual hal::Error setVisibleRegion(
             const android::Region& region) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setZOrder(uint32_t z) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setType(uint32_t type) = 0;
 
     // Composer HAL 2.3
     [[clang::warn_unused_result]] virtual hal::Error setColorTransform(
@@ -287,6 +305,10 @@ public:
     // Composer HAL 2.4
     [[clang::warn_unused_result]] virtual hal::Error setLayerGenericMetadata(
             const std::string& name, bool mandatory, const std::vector<uint8_t>& value) = 0;
+#ifdef QTI_UNIFIED_DRAW
+    [[clang::warn_unused_result]] virtual hal::Error setLayerFlag(
+            IQtiComposerClient::LayerFlag layerFlag) = 0;
+#endif
 };
 
 namespace impl {
@@ -322,6 +344,7 @@ public:
     hal::Error setTransform(hal::Transform transform) override;
     hal::Error setVisibleRegion(const android::Region& region) override;
     hal::Error setZOrder(uint32_t z) override;
+    hal::Error setType(uint32_t type) override;
 
     // Composer HAL 2.3
     hal::Error setColorTransform(const android::mat4& matrix) override;
@@ -329,7 +352,9 @@ public:
     // Composer HAL 2.4
     hal::Error setLayerGenericMetadata(const std::string& name, bool mandatory,
                                        const std::vector<uint8_t>& value) override;
-
+#ifdef QTI_UNIFIED_DRAW
+    hal::Error setLayerFlag(IQtiComposerClient::LayerFlag layerFlag) override;
+#endif
 private:
     // These are references to data owned by HWC2::Device, which will outlive
     // this HWC2::Layer, so these references are guaranteed to be valid for
@@ -348,6 +373,10 @@ private:
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;
     uint32_t mBufferSlot;
+    uint32_t mType{0};
+#ifdef QTI_UNIFIED_DRAW
+    IQtiComposerClient::LayerFlag mLayerFlag = IQtiComposerClient::LayerFlag::DEFAULT;
+#endif
 };
 
 } // namespace impl

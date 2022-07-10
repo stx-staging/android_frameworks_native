@@ -29,6 +29,8 @@
 #include <gui/IProducerListener.h>
 #include <gui/Surface.h>
 #include <utils/Singleton.h>
+#include <string.h>
+
 #include <utils/Trace.h>
 
 #include <private/gui/ComposerService.h>
@@ -152,9 +154,9 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name)
     mBufferItemConsumer->setName(String8(consumerName.c_str()));
     mBufferItemConsumer->setFrameAvailableListener(this);
     mBufferItemConsumer->setBufferFreedListener(this);
-
     ComposerService::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
+
     mNumAcquired = 0;
     mNumFrameAvailable = 0;
     BQA_LOGV("BLASTBufferQueue created");
@@ -226,6 +228,24 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
     }
     if (applyTransaction) {
         t.setApplyToken(mApplyToken).apply();
+    }
+    if(strstr(mName.c_str(),"ScreenDecorOverlay") != nullptr){
+       sp<SurfaceComposerClient> client = mSurfaceControl->getClient();
+       if (client != nullptr) {
+           const sp<IBinder> display = client->getInternalDisplayToken();
+           if (display != nullptr) {
+               bool isDeviceRCSupported = false;
+               status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
+               if (!err && isDeviceRCSupported) {
+                   // retain original flags and append SW Flags
+                   uint64_t usage = GraphicBuffer::USAGE_HW_COMPOSER |
+                                    GraphicBuffer::USAGE_HW_TEXTURE |
+                                    GraphicBuffer::USAGE_SW_READ_RARELY |
+                                    GraphicBuffer::USAGE_SW_WRITE_RARELY;
+                   mConsumer->setConsumerUsageBits(usage);
+                }
+            }
+        }
     }
 }
 
@@ -450,6 +470,7 @@ void BLASTBufferQueue::releaseBufferCallbackLocked(const ReleaseCallbackId& id,
         BQA_LOGV("released %s", id.to_string().c_str());
         mBufferItemConsumer->releaseBuffer(it->second, releaseBuffer.releaseFence);
         mSubmitted.erase(it);
+        mNumUndequeued++;
         // Don't process the transactions here if mWaitForTransactionCallback is set. Instead, let
         // onFrameAvailable handle processing them since it will merge with the nextTransaction.
         if (!mWaitForTransactionCallback) {
@@ -700,6 +721,7 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
 void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::unique_lock _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
+    mNumUndequeued--;
 };
 
 void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {

@@ -32,6 +32,7 @@ public:
     MOCK_METHOD2(setExpensiveRenderingExpected, void(DisplayId displayId, bool expected));
     MOCK_METHOD0(isUsingExpensiveRendering, bool());
     MOCK_METHOD0(notifyDisplayUpdateImminent, void());
+    MOCK_METHOD0(canNotifyDisplayUpdateImminent, bool());
 };
 
 } // namespace android::Hwc2::mock

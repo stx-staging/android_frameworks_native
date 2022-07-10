@@ -62,6 +62,8 @@ struct ISchedulerCallback {
     virtual void repaintEverythingForHWC() = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
+    virtual void getModeFromFps(float, DisplayModePtr&) = 0;
+    virtual nsecs_t getVsyncPeriodFromHWCcb() = 0;
 
 protected:
     ~ISchedulerCallback() = default;
@@ -81,8 +83,8 @@ public:
                                       std::chrono::nanoseconds readyDuration,
                                       impl::EventThread::InterceptVSyncsCallback);
 
-    sp<IDisplayEventConnection> createDisplayEventConnection(
-            ConnectionHandle, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -113,8 +115,9 @@ public:
     // Otherwise, if hardware vsync is not already enabled then this method will
     // no-op.
     // The period is the vsync period from the current display configuration.
-    void resyncToHardwareVsync(bool makeAvailable, nsecs_t period);
+    void resyncToHardwareVsync(bool makeAvailable, nsecs_t period, bool force_resync = false);
     void resync() EXCLUDES(mRefreshRateConfigsLock);
+    void resyncAndRefresh();
 
     // Passes a vsync sample to VsyncController. periodFlushed will be true if
     // VsyncController detected that the vsync period changed, and false otherwise.
@@ -134,6 +137,7 @@ public:
     void chooseRefreshRateForContent() EXCLUDES(mRefreshRateConfigsLock);
 
     void resetIdleTimer();
+    void handleIdleTimeout(bool enable) { mHandleIdleTimeout = enable; }
 
     // Function that resets the touch timer.
     void notifyTouchEvent();
@@ -176,6 +180,7 @@ public:
     // FrameRateOverride.refreshRateHz == 0 means no preference.
     void setPreferredRefreshRateForUid(FrameRateOverride) EXCLUDES(mFrameRateOverridesLock);
     // Retrieves the overridden refresh rate for a given uid.
+
     std::optional<Fps> getFrameRateOverride(uid_t uid) const
             EXCLUDES(mRefreshRateConfigsLock, mFrameRateOverridesLock);
 
@@ -214,6 +219,8 @@ public:
         return mRefreshRateConfigs->getCurrentRefreshRate().getVsyncPeriod();
     }
 
+    void setIdleState();
+    void updateThermalFps(float fps);
 private:
     friend class TestableScheduler;
 
@@ -245,9 +252,9 @@ private:
     static std::unique_ptr<LayerHistory> createLayerHistory();
 
     // Create a connection on the given EventThread.
-    ConnectionHandle createConnection(std::unique_ptr<EventThread>);
-    sp<EventThreadConnection> createConnectionInternal(
-            EventThread*, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);
+    sp<EventThreadConnection> createConnectionInternal(EventThread*, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState) EXCLUDES(mRefreshRateConfigsLock);
@@ -259,7 +266,7 @@ private:
     template <class T>
     bool handleTimerStateChanged(T* currentState, T newState);
 
-    void setVsyncPeriod(nsecs_t period);
+    void setVsyncPeriod(nsecs_t period, bool force_resync = false);
 
     // This function checks whether individual features that are affecting the refresh rate
     // selection were initialized, prioritizes them, and calculates the DisplayModeId
@@ -360,6 +367,14 @@ private:
             GUARDED_BY(mFrameRateOverridesLock);
     scheduler::RefreshRateConfigs::UidToFrameRateOverride mFrameRateOverridesFromBackdoor
             GUARDED_BY(mFrameRateOverridesLock);
+    // This flag indicates display in idle. Refresh as and when vsync is requested.
+    bool mDisplayIdle;
+
+    // This state variable indicates whether to handle the Idle Timer Callback.
+    std::atomic<bool> mHandleIdleTimeout = true;
+
+    // Cache thermal Fps, and limit to the given level
+    float mThermalFps = 0.0f;
 
     // Keeps track of whether the screen is acquired for debug
     std::atomic<bool> mScreenAcquired = false;

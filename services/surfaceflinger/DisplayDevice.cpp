@@ -73,6 +73,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
         mPhysicalOrientation(args.physicalOrientation),
         mSupportedModes(std::move(args.supportedModes)),
         mIsPrimary(args.isPrimary),
+        mIsPowerModeOverride(false),
         mRefreshRateConfigs(std::move(args.refreshRateConfigs)) {
     mCompositionDisplay->editState().isSecure = args.isSecure;
     mCompositionDisplay->createRenderSurface(
@@ -142,6 +143,7 @@ uint32_t DisplayDevice::getPageFlipCount() const {
 // ----------------------------------------------------------------------------
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
+    resetVsyncPeriod();
     getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
 }
 
@@ -162,6 +164,7 @@ void DisplayDevice::setActiveMode(DisplayModeId id) {
     LOG_FATAL_IF(!mode, "Cannot set active mode which is not supported.");
     ATRACE_INT(mActiveModeFPSTrace.c_str(), mode->getFps().getIntValue());
     mActiveMode = mode;
+    resetVsyncPeriod();
     if (mRefreshRateConfigs) {
         mRefreshRateConfigs->setCurrentModeId(mActiveMode->getId());
     }
@@ -202,15 +205,34 @@ DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
     return nullptr;
 }
 
+void DisplayDevice::resetVsyncPeriod() {
+    std::scoped_lock<std::mutex> lock(mModeLock);
+    mVsyncPeriodUpdated = true;
+    mVsyncPeriod = 0;
+}
+
 nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
+    std::scoped_lock<std::mutex> lock(mModeLock);
     const auto physicalId = getPhysicalId();
     if (!mHwComposer.isConnected(physicalId)) {
         return 0;
     }
 
+    if (!mVsyncPeriodUpdated && mVsyncPeriod) {
+        ALOGD("%s: value is cached. return %lu", __func__, (unsigned long)mVsyncPeriod);
+        return mVsyncPeriod;
+    }
+
     nsecs_t vsyncPeriod;
     const auto status = mHwComposer.getDisplayVsyncPeriod(physicalId, &vsyncPeriod);
     if (status == NO_ERROR) {
+        ALOGD("%s: Called HWC getDisplayVsyncPeriod. No error. period=%lu", __func__,
+          (unsigned long)vsyncPeriod);
+        if (mVsyncPeriod == vsyncPeriod) {
+            mVsyncPeriodUpdated = false;
+        } else {
+            mVsyncPeriod = vsyncPeriod;
+        }
         return vsyncPeriod;
     }
 
@@ -225,6 +247,14 @@ nsecs_t DisplayDevice::getRefreshTimestamp() const {
 
 void DisplayDevice::onVsync(nsecs_t timestamp) {
     mLastHwVsync = timestamp;
+}
+
+void DisplayDevice::setPowerModeOverrideConfig(bool supported) {
+    mIsPowerModeOverride = supported;
+}
+
+bool DisplayDevice::getPowerModeOverrideConfig() const {
+    return mIsPowerModeOverride;
 }
 
 ui::Dataspace DisplayDevice::getCompositionDataSpace() const {

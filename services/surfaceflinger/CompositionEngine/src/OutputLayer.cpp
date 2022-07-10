@@ -31,6 +31,9 @@
 #pragma clang diagnostic ignored "-Wconversion"
 
 #include "DisplayHardware/HWComposer.h"
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
@@ -52,7 +55,9 @@ FloatRect reduce(const FloatRect& win, const Region& exclude) {
 }
 
 } // namespace
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 std::unique_ptr<OutputLayer> createOutputLayer(const compositionengine::Output& output,
                                                const sp<compositionengine::LayerFE>& layerFE) {
     return createOutputLayerTemplated<OutputLayer>(output, layerFE);
@@ -532,6 +537,12 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
             // Ignored
             break;
     }
+
+    if (auto error = hwcLayer->setType(outputIndependentState.layerClass);
+        error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set layer class: %s (%d)", getLayerFE().getDebugName(),
+              to_string(error).c_str(), static_cast<int32_t>(error));
+    }
 }
 
 void OutputLayer::writeSolidColorStateToHWC(HWC2::Layer* hwcLayer,
@@ -648,6 +659,22 @@ void OutputLayer::writeCursorPositionToHWC() const {
               static_cast<int32_t>(error));
     }
 }
+
+#ifdef QTI_UNIFIED_DRAW
+void OutputLayer::writeLayerFlagToHWC(IQtiComposerClient::LayerFlag flag) {
+    // Skip doing this if there is no HWC interface
+    auto hwcLayer = getHwcLayer();
+    if (!hwcLayer) {
+        return;
+    }
+    if (auto error = hwcLayer->setLayerFlag(flag);
+        error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set layer flag  %s (%d))",
+              getLayerFE().getDebugName(), to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+
+}
+#endif
 
 HWC2::Layer* OutputLayer::getHwcLayer() const {
     const auto& state = getState();

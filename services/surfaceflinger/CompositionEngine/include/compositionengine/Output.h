@@ -150,6 +150,8 @@ public:
         Region dirtyRegion;
     };
 
+    bool hasSecureDisplay{false};
+
     virtual ~Output();
 
     // Returns true if the output is valid. This is meant to be checked post-
@@ -267,6 +269,10 @@ public:
 
     // Latches the front-end layer state for each output layer
     virtual void updateLayerStateFromFE(const CompositionRefreshArgs&) const = 0;
+
+    // Gets Layer IDs and Names of Visible layers managed by this output.
+    virtual void getVisibleLayerInfo(std::vector<std::string> *layerName,
+                                     std::vector<int32_t> *layerSequence) const = 0;
 
 protected:
     virtual void setDisplayColorProfile(std::unique_ptr<DisplayColorProfile>) = 0;

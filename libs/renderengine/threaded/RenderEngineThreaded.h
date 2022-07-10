@@ -55,6 +55,7 @@ public:
     bool supportsProtectedContent() const override;
     void useProtectedContext(bool useProtectedContext) override;
     void cleanupPostRender() override;
+    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
 
     status_t drawLayers(const DisplaySettings& display,
                         const std::vector<const LayerSettings*>& layers,
@@ -66,6 +67,7 @@ public:
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
     void onActiveDisplaySizeChanged(ui::Size size) override;
+    int getRETid() override;
 
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;

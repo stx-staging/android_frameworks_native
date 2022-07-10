@@ -27,10 +27,15 @@
 
 #include "DisplayHardware/DisplayIdentification.h"
 
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 namespace android::compositionengine {
 
 struct LayerFECompositionState;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 namespace impl {
 
 // The implementation class contains the common implementation, but does not
@@ -46,7 +51,9 @@ public:
     void writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t z, bool zIsOverridden,
                          bool isPeekingThrough) override;
     void writeCursorPositionToHWC() const override;
-
+#ifdef QTI_UNIFIED_DRAW
+    void writeLayerFlagToHWC(IQtiComposerClient::LayerFlag) override;
+#endif
     HWC2::Layer* getHwcLayer() const override;
     bool requiresClientComposition() const override;
     bool isHardwareCursor() const override;

@@ -71,9 +71,11 @@
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
+#include "QtiGralloc.h"
 
 #define DEBUG_RESIZE 0
 
+using android::hardware::graphics::common::V1_0::BufferUsage;
 namespace android {
 namespace {
 constexpr int kDumpTableRowLength = 159;
@@ -134,6 +136,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mDrawingState.frameTimelineInfo = {};
     mDrawingState.postTime = -1;
     mDrawingState.destinationFrame.makeInvalid();
+    mDrawingState.isTrustedOverlay = false;
     mDrawingState.dropInputMode = gui::DropInputMode::NONE;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
@@ -449,6 +452,11 @@ void Layer::prepareGeometryCompositionState() {
     compositionState->geomBufferUsesDisplayInverseTransform = getTransformToDisplayInverse();
     compositionState->geomUsesSourceCrop = usesSourceCrop();
     compositionState->isSecure = isSecure();
+    compositionState->isSecureDisplay = isSecureDisplay();
+    compositionState->isSecureCamera = isSecureCamera();
+    compositionState->isScreenshot = isScreenshot();
+
+    compositionState->layerClass = mLayerClass;
 
     compositionState->metadata.clear();
     const auto& supportedMetadata = mFlinger->getHwComposer().getSupportedLayerGenericMetadata();
@@ -681,6 +689,28 @@ bool Layer::isSecure() const {
 
     const auto p = mDrawingParent.promote();
     return (p != nullptr) ? p->isSecure() : false;
+}
+
+bool Layer::isSecureDisplay() const {
+    sp<const GraphicBuffer> buffer = getBuffer();
+    return buffer && (buffer->getUsage() & GRALLOC_USAGE_PRIVATE_SECURE_DISPLAY);
+}
+
+bool Layer::isSecureCamera() const {
+    sp<const GraphicBuffer> buffer = getBuffer();
+    bool protected_buffer = buffer && (buffer->getUsage() & BufferUsage::PROTECTED);
+    bool camera_output = buffer && (buffer->getUsage() & BufferUsage::CAMERA_OUTPUT);
+    return protected_buffer && camera_output;
+}
+
+bool Layer::isScreenshot() const {
+    return (isScreenshotName(getName()));
+}
+
+bool Layer::isScreenshotName(std::string layer_name) {
+    return ((layer_name.find("ScreenshotSurface") != std::string::npos) ||
+            (layer_name.find("RotationLayer") != std::string::npos) ||
+            (layer_name.find("BackColorSurface") != std::string::npos));
 }
 
 // ----------------------------------------------------------------------------
@@ -1076,6 +1106,14 @@ uint32_t Layer::getLayerStack() const {
     return p->getLayerStack();
 }
 
+void Layer::setSmomoLayerStackId() {
+    smomoLayerStackId = getLayerStack();
+}
+
+uint32_t Layer::getSmomoLayerStackId() {
+    return smomoLayerStackId;
+}
+
 bool Layer::setShadowRadius(float shadowRadius) {
     if (mDrawingState.shadowRadius == shadowRadius) {
         return false;
@@ -1430,6 +1468,7 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
+    result.append(" Layer Class | ");
     result.append(" Comp Type | ");
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
@@ -1480,6 +1519,7 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
         StringAppendF(&result, "  %10d | ", layerState.z);
     }
     StringAppendF(&result, "  %10d | ", mWindowType);
+    StringAppendF(&result, "  %10d | ", mLayerClass);
     StringAppendF(&result, "%10s | ", toString(getCompositionType(display)).c_str());
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
     const Rect& frame = outputLayerState.displayFrame;
@@ -2658,6 +2698,10 @@ bool Layer::getPrimaryDisplayOnly() const {
 
     sp<Layer> parent = mDrawingParent.promote();
     return parent == nullptr ? false : parent->getPrimaryDisplayOnly();
+}
+
+nsecs_t Layer::getPreviousGfxInfo() {
+    return mFrameTracker.getPreviousGfxInfo();
 }
 
 void Layer::setClonedChild(const sp<Layer>& clonedChild) {

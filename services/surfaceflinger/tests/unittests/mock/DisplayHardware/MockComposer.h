@@ -41,7 +41,9 @@ using android::hardware::graphics::composer::V2_1::IComposer;
 using android::hardware::graphics::composer::V2_1::Layer;
 using android::hardware::graphics::composer::V2_4::IComposerCallback;
 using android::hardware::graphics::composer::V2_4::IComposerClient;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 class Composer : public Hwc2::Composer {
 public:
     using Display = android::hardware::graphics::composer::V2_1::Display;
@@ -107,6 +109,7 @@ public:
     MOCK_METHOD3(setLayerVisibleRegion,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerZOrder, Error(Display, Layer, uint32_t));
+    MOCK_METHOD3(setLayerType, Error(Display, Layer, uint32_t));
     MOCK_METHOD3(getRenderIntents, Error(Display, ColorMode, std::vector<RenderIntent>*));
     MOCK_METHOD3(setLayerColorTransform, Error(Display, Layer, const float*));
     MOCK_METHOD4(getDisplayedContentSamplingAttributes,
@@ -137,6 +140,12 @@ public:
     MOCK_METHOD1(getLayerGenericMetadataKeys,
                  V2_4::Error(std::vector<IComposerClient::LayerGenericMetadataKey>*));
     MOCK_METHOD2(getClientTargetProperty, Error(Display, IComposerClient::ClientTargetProperty*));
+    MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
+#ifdef QTI_UNIFIED_DRAW
+    MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));
+    MOCK_METHOD2(tryDrawMethod,Error(Display, IQtiComposerClient::DrawMethod));
+    MOCK_METHOD3(setLayerFlag, Error(Display, Layer, IQtiComposerClient::LayerFlag));
+#endif
 };
 
 } // namespace Hwc2::mock

@@ -52,6 +52,8 @@ public:
     bool isProtected() const override { return mProtected; }
 
     const sp<Fence>& getClientTargetAcquireFence() const override;
+    int getClientTargetCurrentSlot() override;
+    ui::Dataspace getClientTargetCurrentDataspace() override;
     void setBufferDataspace(ui::Dataspace) override;
     void setBufferPixelFormat(ui::PixelFormat) override;
     void setDisplaySize(const ui::Size&) override;
@@ -73,6 +75,8 @@ public:
     void setSizeForTest(const ui::Size&);
     std::shared_ptr<renderengine::ExternalTexture>& mutableTextureForTest();
     base::unique_fd& mutableBufferReadyForTest();
+    void flipClientTarget(bool flip) override;
+    void setViewportAndProjection() override;
 
 private:
     const compositionengine::CompositionEngine& mCompositionEngine;
@@ -88,6 +92,7 @@ private:
     ui::Size mSize;
     const size_t mMaxTextureCacheSize;
     bool mProtected{false};
+    bool mFlipClientTarget{false};
     std::uint32_t mPageFlipCount{0};
 };
 

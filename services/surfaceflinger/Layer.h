@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2007 The Android Open Source Project
  *
@@ -680,6 +679,11 @@ public:
      */
     bool isSecure() const;
 
+    bool isSecureCamera() const;
+    bool isSecureDisplay() const;
+    bool isScreenshot() const;
+    static bool isScreenshotName(std::string layer_name);
+
     /*
      * isHiddenByPolicy - true if this layer has been forced invisible.
      * just because this is false, doesn't mean isVisible() is true.
@@ -902,6 +906,9 @@ public:
     virtual std::string getPendingBufferCounterName() { return ""; }
     virtual bool updateGeometry() { return false; }
 
+    void setSmomoLayerStackId();
+    uint32_t getSmomoLayerStackId();
+
 protected:
     friend class impl::SurfaceInterceptor;
 
@@ -958,7 +965,10 @@ protected:
     LayerVector makeTraversalList(LayerVector::StateSet, bool* outSkipRelativeZUsers);
     void addZOrderRelative(const wp<Layer>& relative);
     void removeZOrderRelative(const wp<Layer>& relative);
+// TODO(b/156774977): Restore protected visibility when fixed.
+public:
     compositionengine::OutputLayer* findOutputLayerForDisplay(const DisplayDevice*) const;
+protected:
     bool usingRelativeZ(LayerVector::StateSet) const;
 
     virtual ui::Transform getInputTransform() const;
@@ -989,6 +999,8 @@ protected:
     ConsumerFrameEventHistory mFrameEventHistory;
     FenceTimeline mAcquireTimeline;
     FenceTimeline mReleaseTimeline;
+
+    uint32_t mLayerClass{0};
 
     // main thread
     sp<NativeHandle> mSidebandStream;
@@ -1126,6 +1138,10 @@ private:
     const std::vector<BlurRegion> getBlurRegions() const;
 
     bool mIsAtRoot = false;
+
+    uint32_t smomoLayerStackId = UINT32_MAX;
+public:
+    nsecs_t getPreviousGfxInfo();
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

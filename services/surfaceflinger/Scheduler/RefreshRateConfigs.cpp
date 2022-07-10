@@ -662,6 +662,10 @@ const RefreshRate* RefreshRateConfigs::getBestRefreshRate(Iter begin, Iter end) 
     return bestRefreshRate;
 }
 
+const AllRefreshRatesMapType& RefreshRateConfigs::getAllRefreshRates() const {
+    return mRefreshRates;
+}
+
 std::optional<Fps> RefreshRateConfigs::onKernelTimerChanged(
         std::optional<DisplayModeId> desiredActiveConfigId, bool timerExpired) const {
     std::lock_guard lock(mLock);

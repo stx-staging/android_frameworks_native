@@ -250,6 +250,17 @@ bool BufferStateLayer::willPresentCurrentTransaction() const {
              (mDrawingState.buffer != nullptr || mDrawingState.bgColorLayer != nullptr)));
 }
 
+/* TODO: vhau uncomment once deferred transaction migration complete in
+ * WindowManager
+void BufferStateLayer::pushPendingState() {
+    if (!mDrawingState.modified) {
+        return;
+    }
+    mPendingStates.push_back(mDrawingState);
+    ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
+}
+*/
+
 Rect BufferStateLayer::getCrop(const Layer::State& s) const {
     return s.crop;
 }
@@ -955,6 +966,10 @@ bool BufferStateLayer::bufferNeedsFiltering() const {
 
 void BufferStateLayer::decrementPendingBufferCount() {
     int32_t pendingBuffers = --mPendingBufferTransactions;
+    if (mFlinger->mDolphinWrapper.dolphinTrackBufferDecrement) {
+        mFlinger->mDolphinWrapper.dolphinTrackBufferDecrement(mBlastTransactionName.c_str(),
+                pendingBuffers);
+    }
     tracePendingBufferCount(pendingBuffers);
 }
 
